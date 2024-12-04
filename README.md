@@ -15,10 +15,10 @@ Create a `.env` file in the root directory of the project and add the following 
 NODE_ENV=dev
 
 # AWS S3 Configuration
-S3_BUCKET_OCR=book-keeping-bucket
+S3_BUCKET_OCR=*
 AWS_REGION=us-east-1
-AWS_ACCESS_KEY_ID=AKIA4HWJUAI2FVTU2SEQ
-AWS_SECRET_ACCESS_KEY=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
+AWS_ACCESS_KEY_ID=*
+AWS_SECRET_ACCESS_KEY=*
 
 # Database Configuration
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres?schema=public
@@ -31,7 +31,7 @@ DB_HOST=127.0.0.1
 DB_PORT=5432
 
 # API Keys
-ANTHROPIC_API_KEY=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
+ANTHROPIC_API_KEY=*
 
 # Server Configuration
 PORT=8000
