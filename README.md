@@ -16,28 +16,28 @@ NODE_ENV=dev
 
 # AWS S3 Configuration
 S3_BUCKET_OCR=*
-AWS_REGION=us-east-1
+AWS_REGION=*
 AWS_ACCESS_KEY_ID=*
 AWS_SECRET_ACCESS_KEY=*
 
 # Database Configuration
-DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres?schema=public
+DATABASE_URL=*
 
 # Dev Database Details
-DB_USERNAME=postgres
-DB_PASSWORD=postgres
-DB_NAME=book-keeping-dev
-DB_HOST=127.0.0.1
-DB_PORT=5432
+DB_USERNAME=*
+DB_PASSWORD=*
+DB_NAME=*
+DB_HOST=*
+DB_PORT=*
 
 # API Keys
 ANTHROPIC_API_KEY=*
 
 # Server Configuration
-PORT=8000
+PORT=*
 
 # PDF Base URL
-PDF_BASE_URL=http://localhost
+PDF_BASE_URL=*
 ```
 
 ### 2. Install the packages
