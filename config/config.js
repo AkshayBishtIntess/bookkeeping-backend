@@ -46,10 +46,6 @@ const sequelize = new Sequelize(
       min: 0,
       acquire: 60000,
       idle: 10000,
-    },
-    sync: {
-      alter: false,
-      // force: false
     }
   }
 );
@@ -61,7 +57,7 @@ async function initDatabase() {
     console.log("Database connection established successfully.");
 
     // Sync all models
-    // await sequelize.sync({ alter: true });
+    await sequelize.sync({ alter: true });
     console.log("All models were synchronized successfully.");
   } catch (error) {
     console.error("Unable to connect to the database:", error);

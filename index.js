@@ -18,17 +18,15 @@ const {
   updateClient,
   deleteClient,
   getClientByAccessCode,
-  findSimilarDescription,
+  updateStatementStatus,
   classifyTransactions,
-  formatDate,
 } = require("./database/operations");
 const {
   Client,
   Classification,
   Transaction,
   AccountInfo,
-  ChartOfAccounts,
-  DetailType,
+  Summary
 } = require("./models/BankStatement");
 const path = require("path");
 const { Op } = require("sequelize");
@@ -221,13 +219,13 @@ app.post(
       }
 
       // Extract client information from request body
-      const { clientName, accessCode, id, monthReference } = req.body;
+      const { clientName, accessCode, id, monthReference, status } = req.body;
 
       // Validate client information and monthReference
-      if (!clientName || !accessCode || !id || !monthReference) {
+      if (!clientName || !accessCode || !id || !monthReference || !status) {
         return res.status(400).json({
           error:
-            "Missing required information. Please provide clientName, accessCode, monthReference and id",
+            "Missing required information. Please provide clientName, accessCode, monthReference, status and id",
         });
       }
 
@@ -302,6 +300,7 @@ app.post(
       const accountInfo = {
         ...extractedData.accountInfo,
         monthReference: monthReference, // Ensure monthReference is included
+        status: status,
         clientId: client.id,
         pdfUrl: pdfUrl,
         pdfFileName: req.file.filename,
@@ -321,7 +320,8 @@ app.post(
         ...response,
         accountInfo: {
           ...response.accountInfo,
-          monthReference: monthReference, // Ensure it's passed to the save function
+          monthReference: monthReference,
+          status: status, // Ensure it's passed to the save function
         },
         clientId: client.id,
         clientAccessCode: accessCode,
@@ -378,7 +378,7 @@ app.get("/api/bank-statements", async (req, res) => {
     const statements = await getAllBankStatements();
 
     if (!statements || statements.length === 0) {
-      return res.status(404).json({
+      return res.status(200).json({
         message: "No bank statements found",
         data: [],
       });
@@ -425,55 +425,142 @@ app.get("/api/bank-statements/:accountId", async (req, res) => {
   }
 });
 
+// app.put("/api/bank-statements/:accountId", async (req, res) => {
+//   const { accountId } = req.params;
+//   const updates = req.body;
+
+//   try {
+//     // Input validation
+//     if (!accountId || isNaN(accountId)) {
+//       return res.status(400).json({
+//         success: false,
+//         error: "Invalid account ID provided",
+//       });
+//     }
+
+//     if (!updates || Object.keys(updates).length === 0) {
+//       return res.status(400).json({
+//         success: false,
+//         error: "Update data is required",
+//       });
+//     }
+
+//     // Validate required data structures
+//     if (updates.accountInfo && typeof updates.accountInfo !== 'object') {
+//       return res.status(400).json({
+//         success: false,
+//         error: "Invalid account info format",
+//       });
+//     }
+
+//     if (updates.transactions && !Array.isArray(updates.transactions)) {
+//       return res.status(400).json({
+//         success: false,
+//         error: "Transactions must be an array",
+//       });
+//     }
+
+//     // Set timeout for the request
+//     req.setTimeout(120000); // 2 minute timeout for the entire request
+
+//     // Attempt update with progress logging
+//     const updatedStatement = await updateBankStatement(accountId, updates);
+
+//     if (!updatedStatement) {
+//       return res.status(404).json({
+//         success: false,
+//         error: `No bank statement found for account ID: ${accountId}`,
+//       });
+//     }
+
+//     // Success response
+//     res.json({
+//       success: true,
+//       message: "Successfully updated bank statement",
+//       data: updatedStatement,
+//       timestamp: new Date().toISOString()
+//     });
+
+//   } catch (error) {
+//     console.error("Error in bank statement update:", {
+//       accountId,
+//       error: error.message,
+//       stack: error.stack,
+//       timestamp: new Date().toISOString()
+//     });
+
+//     // Determine appropriate error status
+//     let statusCode = 500;
+//     if (error.message.includes("not found")) {
+//       statusCode = 404;
+//     } else if (error.message.includes("validation") || error.message.includes("invalid")) {
+//       statusCode = 400;
+//     } else if (error.message.includes("timeout")) {
+//       statusCode = 504;
+//     }
+
+//     res.status(statusCode).json({
+//       success: false,
+//       error: "Failed to update bank statement",
+//       details: error.message,
+//       code: statusCode,
+//       timestamp: new Date().toISOString()
+//     });
+//   }
+// });
+
+
+
 app.put("/api/bank-statements/:accountId", async (req, res) => {
   const { accountId } = req.params;
   const updates = req.body;
+  let t;
 
   try {
-    // Input validation
-    if (!accountId || isNaN(accountId)) {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid account ID provided",
-      });
-    }
+    t = await sequelize.transaction();
 
-    if (!updates || Object.keys(updates).length === 0) {
-      return res.status(400).json({
-        success: false,
-        error: "Update data is required",
-      });
-    }
-
-    // Validate required data structures
-    if (updates.accountInfo && typeof updates.accountInfo !== 'object') {
-      return res.status(400).json({
-        success: false,
-        error: "Invalid account info format",
-      });
-    }
-
-    if (updates.transactions && !Array.isArray(updates.transactions)) {
-      return res.status(400).json({
-        success: false,
-        error: "Transactions must be an array",
-      });
-    }
-
-    // Set timeout for the request
-    req.setTimeout(120000); // 2 minute timeout for the entire request
-
-    // Attempt update with progress logging
-    const updatedStatement = await updateBankStatement(accountId, updates);
-
-    if (!updatedStatement) {
+    // Find account info
+    const accountInfo = await AccountInfo.findByPk(accountId, { transaction: t });
+    if (!accountInfo) {
+      await t.rollback();
       return res.status(404).json({
         success: false,
-        error: `No bank statement found for account ID: ${accountId}`,
+        error: "Account not found"
       });
     }
 
-    // Success response
+    // Update account info if provided
+    if (updates.accountInfo) {
+      await accountInfo.update(updates.accountInfo, { transaction: t });
+    }
+
+    // Handle transactions updates
+    if (updates.transactions && Array.isArray(updates.transactions)) {
+      for (const transaction of updates.transactions) {
+        if (!transaction.id) {
+          // This is a new transaction to be inserted
+          await Transaction.create({
+            ...transaction,
+            accountId: parseInt(accountId)
+          }, { transaction: t });
+        } else {
+          // Update existing transaction
+          await Transaction.update(transaction, {
+            where: { 
+              id: transaction.id,
+              accountId: parseInt(accountId)
+            },
+            transaction: t
+          });
+        }
+      }
+    }
+
+    await t.commit();
+
+    // Fetch and return updated data
+    const updatedStatement = await getBankStatementByAccountId(accountId);
+
     res.json({
       success: true,
       message: "Successfully updated bank statement",
@@ -482,6 +569,10 @@ app.put("/api/bank-statements/:accountId", async (req, res) => {
     });
 
   } catch (error) {
+    if (t && !t.finished) {
+      await t.rollback();
+    }
+
     console.error("Error in bank statement update:", {
       accountId,
       error: error.message,
@@ -489,21 +580,10 @@ app.put("/api/bank-statements/:accountId", async (req, res) => {
       timestamp: new Date().toISOString()
     });
 
-    // Determine appropriate error status
-    let statusCode = 500;
-    if (error.message.includes("not found")) {
-      statusCode = 404;
-    } else if (error.message.includes("validation") || error.message.includes("invalid")) {
-      statusCode = 400;
-    } else if (error.message.includes("timeout")) {
-      statusCode = 504;
-    }
-
-    res.status(statusCode).json({
+    res.status(500).json({
       success: false,
       error: "Failed to update bank statement",
       details: error.message,
-      code: statusCode,
       timestamp: new Date().toISOString()
     });
   }
@@ -611,170 +691,244 @@ app.delete("/api/delete/:id", async (req, res) => {
   }
 });
 
-// app.post('/api/classify-transactions', async (req, res) => {
-//   let t;
-//   try {
-//     t = await sequelize.transaction();
-
-//     // Fetch all unclassified transactions
-//     const transactions = await Transaction.findAll({
-//       where: {
-//         split: null  // Only get unclassified transactions
-//       },
-//       attributes: ['id', 'date', 'description', 'amount', 'type', 'split', 'account_code', 'detail_type_id', 'subtype_id'],
-//       include: [
-//         { model: AccountInfo },
-//         {
-//           model: ChartOfAccounts,
-//           attributes: ['account_name', 'account_code', 'detail_type_id', 'subtype_id']
-//         }
-//       ],
-//       order: [['date', 'DESC']]
-//     });
-
-//     console.log(`Processing ${transactions.length} transactions`);
-
-//     const classificationResult = await classifyTransactions(transactions);
-
-//     // Fetch ALL transactions after classification (including previously classified ones)
-//     const updatedTransactions = await Transaction.findAll({
-//       attributes: ['id', 'date', 'description', 'amount', 'type', 'split', 'account_code', 'detail_type_id', 'subtype_id'],
-//       include: [
-//         { model: AccountInfo },
-//         {
-//           model: ChartOfAccounts,
-//           attributes: ['account_name', 'account_code']
-//         }
-//       ],
-//       order: [['date', 'DESC']]
-//     });
-
-//     res.json({
-//       success: true,
-//       message: `Classification completed. ${classificationResult.classified} out of ${transactions.length} transactions classified.`,
-//       statistics: classificationResult,
-//       accountInfo: updatedTransactions[0]?.AccountInfo,
-//       transactions: updatedTransactions.map(transaction => ({
-//         id: transaction.id,
-//         date: transaction.date,
-//         description: transaction.description,
-//         amount: transaction.amount,
-//         type: transaction.type,
-//         split: transaction.split,
-//         account_code: transaction.account_code,
-//         detail_type_id: transaction.detail_type_id,
-//         subtype_id: transaction.subtype_id,
-//         chartOfAccount: transaction.ChartOfAccount
-//       }))
-//     });
-
-//   } catch (error) {
-//     if (t && !t.finished) {
-//       await t.rollback();
-//     }
-//     console.error('Classification Error:', error);
-//     res.status(500).json({
-//       success: false,
-//       error: error.message
-//     });
-//   }
-// });
-
-// Endpoint to manually update classification
-
-app.get("/api/classify-transactions", async (req, res) => {
+// Delete a transaction by id
+app.delete("/api/transactions/:id", async (req, res) => {
+  const { id } = req.params;
   let t;
+
   try {
     t = await sequelize.transaction();
 
-    // Fetch all unclassified transactions
-    const transactions = await Transaction.findAll({
-      where: {
-        split: null, // Only get unclassified transactions
-      },
-      attributes: [
-        "id",
-        "date",
-        "description",
-        "amount",
-        "type",
-        "split",
-        "account_code",
-        "detail_type_id",
-        "subtype_id",
-      ],
-      include: [
-        { model: AccountInfo },
-        {
-          model: ChartOfAccounts,
-          attributes: [
-            "account_name",
-            "account_code",
-            "detail_type_id",
-            "subtype_id",
-          ],
-        },
-      ],
-      order: [["date", "DESC"]],
+    // Find the transaction first to verify it exists
+    const transaction = await Transaction.findByPk(id, { transaction: t });
+    
+    if (!transaction) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        error: "Transaction not found"
+      });
+    }
+
+    // Store accountId for later use
+    const accountId = transaction.accountId;
+
+    // Delete the transaction
+    await Transaction.destroy({
+      where: { id },
+      transaction: t
     });
 
-    const classificationResult = await classifyTransactions(
-      transactions,
-      transactions.length > 0 ? transactions[0].AccountInfo : null
-    );
-
-    // Fetch ALL transactions after classification (including previously classified ones)
-    const updatedTransactions = await Transaction.findAll({
+    // Recalculate summary after deletion
+    const summaryResult = await Transaction.findOne({
       attributes: [
-        "id",
-        "date",
-        "description",
-        "amount",
-        "type",
-        "split",
-        "account_code",
-        "detail_type_id",
-        "subtype_id",
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'credit' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalDeposits",
+        ],
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'debit' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalWithdrawals",
+        ],
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'check' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalChecks",
+        ],
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'fee' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalFees",
+        ],
       ],
-      include: [
-        { model: AccountInfo },
-        {
-          model: ChartOfAccounts,
-          attributes: ["account_name", "account_code"],
-        },
-      ],
-      order: [["date", "DESC"]],
+      where: { accountId },
+      transaction: t,
     });
+
+    // Update summary
+    const newSummary = {
+      totalDeposits: summaryResult?.getDataValue("totalDeposits") || 0,
+      totalWithdrawals: summaryResult?.getDataValue("totalWithdrawals") || 0,
+      totalChecks: summaryResult?.getDataValue("totalChecks") || 0,
+      totalFees: summaryResult?.getDataValue("totalFees") || 0,
+    };
+
+    await Summary.update(newSummary, {
+      where: { accountId },
+      transaction: t
+    });
+
+    await t.commit();
+
+    // Return success response with updated statement
+    const updatedStatement = await getBankStatementByAccountId(accountId);
 
     res.json({
       success: true,
-      message: `Classification completed. ${classificationResult.classified} out of ${transactions.length} transactions classified.`,
-      statistics: classificationResult,
-      accountInfo:
-        updatedTransactions.length > 0
-          ? updatedTransactions[0].AccountInfo
-          : null,
-      transactions: updatedTransactions.map((transaction) => ({
-        id: transaction.id,
-        date: transaction.date,
-        description: transaction.description,
-        amount: transaction.amount,
-        type: transaction.type,
-        split: transaction.split,
-        account_code: transaction.account_code,
-        detail_type_id: transaction.detail_type_id,
-        subtype_id: transaction.subtype_id,
-        chartOfAccount: transaction.ChartOfAccount,
-      })),
+      message: "Transaction deleted successfully",
+      data: updatedStatement
     });
+
   } catch (error) {
     if (t && !t.finished) {
       await t.rollback();
     }
+
+    console.error("Error deleting transaction:", error);
+    res.status(500).json({
+      success: false,
+      error: "Failed to delete transaction",
+      details: error.message
+    });
+  }
+});
+
+app.get("/api/classify-transactions/:accountId", async (req, res) => {
+  let t;
+  try {
+    const { accountId } = req.params;
+
+    // Validate accountId
+    if (!accountId || isNaN(accountId)) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid account ID provided"
+      });
+    }
+
+    t = await sequelize.transaction();
+
+    // Get account info
+    const accountInfo = await AccountInfo.findByPk(accountId, { transaction: t });
+    if (!accountInfo) {
+      await t.rollback();
+      return res.status(404).json({
+        success: false,
+        error: "Account not found"
+      });
+    }
+
+    // Get similarity matches
+    const matchQuery = `
+      WITH similarity_scores AS (
+          SELECT 
+              t.id as transaction_id,
+              t.description as transaction_description,
+              s.id as classification_id,
+              s.memo as classification_memo,
+              s.split as classification_split,
+              similarity(t.description, s.memo) as sim_score,
+              ROW_NUMBER() OVER (
+                  PARTITION BY t.id 
+                  ORDER BY similarity(t.description, s.memo) DESC
+              ) as rank
+          FROM 
+              public."Transactions" t
+          CROSS JOIN 
+              public."classification_knowledge" s
+          WHERE
+              t."accountId" = :accountId
+      )
+      SELECT 
+          transaction_id,
+          transaction_description,
+          classification_id,
+          classification_memo,
+          classification_split,
+          sim_score
+      FROM 
+          similarity_scores
+      WHERE 
+          rank = 1;
+    `;
+
+    const matches = await sequelize.query(matchQuery, {
+      replacements: { accountId: parseInt(accountId) },
+      type: sequelize.QueryTypes.SELECT,
+      transaction: t
+    });
+
+    // Update transactions with matches
+    if (matches && matches.length > 0) {
+      for (const match of matches) {
+        await Transaction.update(
+          { 
+            split: match.classification_split 
+          },
+          { 
+            where: { 
+              id: match.transaction_id,
+              accountId: parseInt(accountId)
+            },
+            transaction: t
+          }
+        );
+      }
+    }
+
+    // Get updated transactions
+    const transactions = await Transaction.findAll({
+      where: { 
+        accountId: parseInt(accountId) 
+      },
+      order: [['date', 'DESC']],
+      transaction: t
+    });
+
+    // Count classified transactions
+    const classifiedCount = transactions.filter(tx => tx.split !== null).length;
+
+    // Prepare response
+    const responseData = {
+      success: true,
+      message: `Classification completed. ${matches?.length || 0} transactions matched.`,
+      statistics: {
+        classified: classifiedCount,
+        total: transactions.length
+      },
+      accountInfo: accountInfo,
+      transactions: transactions.map(tx => ({
+        id: tx.id,
+        date: tx.date,
+        description: tx.description,
+        amount: tx.amount,
+        type: tx.type,
+        split: tx.split
+      }))
+    };
+
+    await t.commit();
+    res.json(responseData);
+
+  } catch (error) {
+    if (t && !t.finished) {
+      await t.rollback();
+    }
+
     console.error("Classification Error:", error);
     res.status(500).json({
       success: false,
-      error: error.message,
+      error: "Classification failed",
+      details: error.message,
+      sql: error.sql // Include SQL for debugging
     });
   }
 });
@@ -824,6 +978,49 @@ app.put("/api/update-classification", async (req, res) => {
     res.status(500).json({
       success: false,
       error: error.message,
+    });
+  }
+});
+
+
+
+app.post('/api/bank-statements/:accountId/status', async (req, res) => {
+  try {
+    const { accountId } = req.params;
+    const status = "Classified";
+
+    // Input validation
+    if (!accountId || isNaN(accountId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid account ID provided'
+      });
+    }
+
+    // Update the status
+    const result = await updateStatementStatus(accountId, status);
+
+    // Send success response
+    res.json({
+      success: true,
+      message: `Bank statement status updated to ${status}`,
+      data: result.data
+    });
+
+  } catch (error) {
+    console.error('Error updating statement status:', error);
+    
+    // Determine appropriate error status
+    let statusCode = 500;
+    if (error.message?.includes('not found')) {
+      statusCode = 404;
+    }
+
+    res.status(statusCode).json({
+      success: false,
+      error: 'Failed to update statement status',
+      details: error.message,
+      timestamp: new Date().toISOString()
     });
   }
 });

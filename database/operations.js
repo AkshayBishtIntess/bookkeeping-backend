@@ -6,9 +6,7 @@ const {
   Check,
   Summary,
   Client,
-  ChartOfAccounts,
   Classification,
-  DetailType
 } = require("../models/BankStatement");
 const sequelize = require("../config/config");
 
@@ -41,7 +39,8 @@ async function saveBankStatementData(data) {
         pdfFileName: data.accountInfo.pdfFileName,
         pdfUploadDate: data.accountInfo.pdfUploadDate,
         pdfFileSize: data.accountInfo.pdfFileSize,
-        monthReference: data.accountInfo.monthReference
+        monthReference: data.accountInfo.monthReference,
+        status: data.accountInfo.status,
       },
       { transaction: t }
     );
@@ -131,32 +130,34 @@ async function getAllBankStatements() {
         },
       ],
     });
+    
 
     return statements.map((statement, index) => ({
       id: index + 1,
-      accountId: statement.id,
-      clientId: statement.clientId,
-      createdAt: statement.createdAt,
+      accountId: statement?.id,
+      clientId: statement?.clientId,
+      createdAt: statement?.createdAt,
       client: {
-        clientName: statement.client.clientName,
-        accessCode: statement.client.accessCode,
-        createdAt: statement.client.createdAt
+        clientName: statement?.client.clientName,
+        accessCode: statement?.client.accessCode,
+        createdAt: statement?.client.createdAt,
       },
       accountInfo: {
-        bankName: statement.bankName,
-        accountHolder: statement.accountHolder,
-        accountNumber: statement.accountNumber,
+        bankName: statement?.bankName,
+        accountHolder: statement?.accountHolder,
+        accountNumber: statement?.accountNumber,
         statementPeriod: {
-          from: statement.statementFromDate,
-          to: statement.statementToDate,
+          from: statement?.statementFromDate,
+          to: statement?.statementToDate,
         },
-        monthReference: statement.monthReference,
+        monthReference: statement?.monthReference,
+        status: statement?.status,
         balances: {
-          beginning: statement.beginningBalance,
-          ending: statement.endingBalance,
+          beginning: statement?.beginningBalance,
+          ending: statement?.endingBalance,
         },
       },
-      transactions: statement.transactions.map((tx) => ({
+      transactions: statement?.transactions.map((tx) => ({
         id: tx.id,
         date: tx.date,
         description: tx.description,
@@ -166,7 +167,7 @@ async function getAllBankStatements() {
           location: tx.location,
           referenceNumber: tx.referenceNumber,
           checkNumber: tx.checkNumber,
-          classification: tx.split
+          classification: tx.split,
         },
       })),
       checks: statement.checks.map((check) => ({
@@ -228,6 +229,7 @@ async function getBankStatementByAccountId(id) {
           beginning: statement.beginningBalance,
           ending: statement.endingBalance,
         },
+        status: statement.status
       },
       transactions: statement.transactions.map((tx) => ({
         id: tx.id,
@@ -239,7 +241,7 @@ async function getBankStatementByAccountId(id) {
           location: tx.location,
           referenceNumber: tx.referenceNumber,
           checkNumber: tx.checkNumber,
-          classification: tx.split
+          classification: tx.split,
         },
       })),
       checks: statement.checks.map((check) => ({
@@ -268,13 +270,13 @@ async function updateBankStatement(accountId, updates) {
   let t = null;
   try {
     t = await sequelize.transaction({
-      timeout: 60000
+      timeout: 60000,
     });
 
     const statement = await AccountInfo.findOne({
       where: { id: accountId },
       transaction: t,
-      lock: true
+      lock: true,
     });
 
     if (!statement) {
@@ -286,14 +288,18 @@ async function updateBankStatement(accountId, updates) {
     if (updates.accountInfo) {
       const accountInfoUpdates = {
         bankName: updates.accountInfo.bankName || statement.bankName,
-        accountNumber: updates.accountInfo.accountNumber || statement.accountNumber,
-        accountHolder: updates.accountInfo.accountHolder || statement.accountHolder,
-        beginningBalance: updates.accountInfo.balances?.beginning !== undefined 
-          ? updates.accountInfo.balances.beginning 
-          : statement.beginningBalance,
-        endingBalance: updates.accountInfo.balances?.ending !== undefined 
-          ? updates.accountInfo.balances.ending 
-          : statement.endingBalance,
+        accountNumber:
+          updates.accountInfo.accountNumber || statement.accountNumber,
+        accountHolder:
+          updates.accountInfo.accountHolder || statement.accountHolder,
+        beginningBalance:
+          updates.accountInfo.balances?.beginning !== undefined
+            ? updates.accountInfo.balances.beginning
+            : statement.beginningBalance,
+        endingBalance:
+          updates.accountInfo.balances?.ending !== undefined
+            ? updates.accountInfo.balances.ending
+            : statement.endingBalance,
       };
 
       await statement.update(accountInfoUpdates, { transaction: t });
@@ -301,7 +307,7 @@ async function updateBankStatement(accountId, updates) {
 
     // Handle transactions update
     if (updates.transactions && Array.isArray(updates.transactions)) {
-      const transactionUpdates = updates.transactions.map(tx => ({
+      const transactionUpdates = updates.transactions.map((tx) => ({
         id: tx.id,
         accountId: statement.id,
         date: tx.date,
@@ -311,53 +317,91 @@ async function updateBankStatement(accountId, updates) {
         location: tx.details?.location,
         referenceNumber: tx.details?.referenceNumber,
         checkNumber: tx.details?.checkNumber,
-        split: tx.details?.classification  // Changed from classification to split
+        split: tx.details?.classification, // Changed from classification to split
       }));
 
       // Update existing transactions
-      await Promise.all(transactionUpdates.map(async (tx) => {
+     // Handle both updates and new transactions
+     await Promise.all(
+      transactionUpdates.map(async (tx) => {
         if (tx.id) {
+          // Update existing transaction
           await Transaction.update(tx, {
             where: { id: tx.id, accountId: statement.id },
-            transaction: t
+            transaction: t,
           });
+        } else {
+          // Create new transaction
+          const { id, ...transactionData } = tx; // Remove id for new transaction
+          await Transaction.create(
+            {
+              ...transactionData,
+              accountId: statement.id
+            },
+            { transaction: t }
+          );
         }
-      }));
-    }
+      })
+    );
+  }
 
     // Calculate new summary
     const summaryResult = await Transaction.findOne({
       attributes: [
-        [sequelize.fn('SUM', 
-          sequelize.literal('CASE WHEN type = \'credit\' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END')
-        ), 'totalDeposits'],
-        [sequelize.fn('SUM', 
-          sequelize.literal('CASE WHEN type = \'debit\' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END')
-        ), 'totalWithdrawals'],
-        [sequelize.fn('SUM', 
-          sequelize.literal('CASE WHEN type = \'check\' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END')
-        ), 'totalChecks'],
-        [sequelize.fn('SUM', 
-          sequelize.literal('CASE WHEN type = \'fee\' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END')
-        ), 'totalFees']
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'credit' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalDeposits",
+        ],
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'debit' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalWithdrawals",
+        ],
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'check' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalChecks",
+        ],
+        [
+          sequelize.fn(
+            "SUM",
+            sequelize.literal(
+              "CASE WHEN type = 'fee' THEN ABS(CAST(amount AS DECIMAL(10,2))) ELSE 0 END"
+            )
+          ),
+          "totalFees",
+        ],
       ],
       where: { accountId: statement.id },
-      transaction: t
+      transaction: t,
     });
 
     const newSummary = {
-      totalDeposits: summaryResult?.getDataValue('totalDeposits') || 0,
-      totalWithdrawals: summaryResult?.getDataValue('totalWithdrawals') || 0,
-      totalChecks: summaryResult?.getDataValue('totalChecks') || 0,
-      totalFees: summaryResult?.getDataValue('totalFees') || 0,
-      accountId: statement.id
+      totalDeposits: summaryResult?.getDataValue("totalDeposits") || 0,
+      totalWithdrawals: summaryResult?.getDataValue("totalWithdrawals") || 0,
+      totalChecks: summaryResult?.getDataValue("totalChecks") || 0,
+      totalFees: summaryResult?.getDataValue("totalFees") || 0,
+      accountId: statement.id,
     };
 
     // Update summary
     if (statement.summary) {
       await Summary.update(newSummary, {
         where: { accountId: statement.id },
-        transaction: t
+        transaction: t,
       });
     } else {
       await Summary.create(newSummary, { transaction: t });
@@ -373,15 +417,30 @@ async function updateBankStatement(accountId, updates) {
         {
           model: Transaction,
           as: "transactions",
-          attributes: ['id', 'date', 'description', 'amount', 'type', 'location', 'referenceNumber', 'checkNumber', 'split'],  // Changed from classification to split
+          attributes: [
+            "id",
+            "date",
+            "description",
+            "amount",
+            "type",
+            "location",
+            "referenceNumber",
+            "checkNumber",
+            "split",
+          ], // Changed from classification to split
           order: [["date", "DESC"]],
         },
         {
           model: Summary,
           as: "summary",
-          attributes: ['totalDeposits', 'totalWithdrawals', 'totalChecks', 'totalFees']
+          attributes: [
+            "totalDeposits",
+            "totalWithdrawals",
+            "totalChecks",
+            "totalFees",
+          ],
         },
-      ]
+      ],
     });
 
     return finalStatement;
@@ -516,111 +575,23 @@ async function deleteClient(id) {
   }
 }
 
-
-async function findSimilarDescription(description) {
-  try {
-    const normalizedDesc = description.toLowerCase().trim();
-
-    // Get all patterns from classification_knowledge
-    const knownClassifications = await Classification.findAll();
-
-    for (const pattern of knownClassifications) {
-      const regex = new RegExp(pattern.memo.toLowerCase().trim(), 'i');
-      if (regex.test(normalizedDesc)) {
-        console.log(`Matched transaction "${description}" to split category "${pattern.split}"`);
-        return pattern.split;
-      }
-    }
-
-    // No match found
-    console.log(`No split category found for transaction "${description}"`);
-    return null;
-  } catch (error) {
-    console.error('Classification error:', error);
-    return null;
-  }
-}
-
-function calculateSimilarity(str1, str2) {
-  const words1 = str1.split(/\s+/);
-  const words2 = str2.split(/\s+/);
-  
-  const commonWords = words1.filter(word => 
-    words2.includes(word)
-  );
-
-  return commonWords.length / Math.max(words1.length, words2.length);
-}
-
-// CLIENT CRUD OPERATIONS ENDS
-
-
-
-
-async function formatDate(date) {
-  return date instanceof Date 
-    ? date.toISOString().split('T')[0] // Convert to YYYY-MM-DD format
-    : null;
-}
-
-
-
-
-
-// async function findSimilarDescription(transaction, accountInfo) {
+// async function findSimilarDescription(description) {
 //   try {
-//     // Get accounts from chart of accounts
-//     const chartAccounts = await ChartOfAccounts.findAll({
-//       include: [{
-//         model: DetailType,
-//         attributes: ['detail_type_name']
-//       }]
-//     });
+//     const normalizedDesc = description?.toLowerCase()?.trim();
 
-//     // For BKOFAMERICA transactions, use bank name + last 4 digits
-//     if (transaction.description.toLowerCase().includes('bkofamerica')) {
-//       const lastFourDigits = accountInfo.accountNumber.slice(-4);
-//       return {
-//         split: `Bank of America ${lastFourDigits}`,
-//         account_code: '1000', // Cash and Cash Equivalents
-//         detail_type_id: '1011',
-//         subtype_id: '101'
-//       };
+//     // Get all patterns from classification_knowledge
+//     const knownClassifications = await Classification.findAll();
+
+//     for (const pattern of knownClassifications) {
+//       const regex = new RegExp(pattern.memo.toLowerCase().trim(), 'i');
+//       if (regex.test(normalizedDesc)) {
+//         console.log(`Matched transaction "${description}" to split category "${pattern.split}"`);
+//         return pattern.split;
+//       }
 //     }
 
-//     // For all other bank transfers
-//     if (transaction.description.toLowerCase().includes('zelle') || 
-//         transaction.description.toLowerCase().includes('transfer') ||
-//         transaction.description.toLowerCase().includes('deposit') ||
-//         transaction.description.toLowerCase().includes('counter credit') ||
-//         transaction.description.toLowerCase().includes('p2p') ||
-//         transaction.description.toLowerCase().includes('a2a.tranfr')) {
-        
-//         const cashAccount = chartAccounts.find(acc => acc.account_code === '1000');
-//         if (cashAccount) {
-//           return {
-//             split: cashAccount.account_name,
-//             account_code: cashAccount.account_code,
-//             detail_type_id: cashAccount.detail_type_id,
-//             subtype_id: cashAccount.subtype_id
-//           };
-//         }
-//     }
-
-//     // For software expenses
-//     if (transaction.description.toLowerCase().includes('qbooks') ||
-//         transaction.description.toLowerCase().includes('intuit')) {
-//         const softwareAccount = chartAccounts.find(acc => acc.account_code === '7300');
-//         if (softwareAccount) {
-//           return {
-//             split: softwareAccount.account_name,
-//             account_code: softwareAccount.account_code,
-//             detail_type_id: softwareAccount.detail_type_id,
-//             subtype_id: softwareAccount.subtype_id
-//           };
-//         }
-//     }
-
+//     // No match found
+//     console.log(`No split category found for transaction "${description}"`);
 //     return null;
 //   } catch (error) {
 //     console.error('Classification error:', error);
@@ -628,203 +599,61 @@ async function formatDate(date) {
 //   }
 // }
 
-// // Update the classifyTransactions function to pass accountInfo
-// async function classifyTransactions(transactions, accountInfo) {
-//   const t = await sequelize.transaction();
-  
-//   try {
-//     let classifiedCount = 0;
-//     const results = [];
+// function calculateSimilarity(str1, str2) {
+//   const words1 = str1.split(/\s+/);
+//   const words2 = str2.split(/\s+/);
 
-//     for (const transaction of transactions) {
-//       const classification = await findSimilarDescription(transaction, accountInfo);
-      
-//       if (classification) {
-//         await Transaction.update({
-//           split: classification.split,
-//           account_code: classification.account_code,
-//           detail_type_id: classification.detail_type_id,
-//           subtype_id: classification.subtype_id
-//         }, {
-//           where: { id: transaction.id },
-//           transaction: t
-//         });
+//   const commonWords = words1.filter(word =>
+//     words2.includes(word)
+//   );
 
-//         classifiedCount++;
-//         results.push({
-//           id: transaction.id,
-//           description: transaction.description,
-//           classification,
-//           status: 'classified'
-//         });
-//       } else {
-//         results.push({
-//           id: transaction.id,
-//           description: transaction.description,
-//           status: 'unclassified'
-//         });
-//       }
-//     }
-
-//     await t.commit();
-//     return {
-//       totalProcessed: transactions.length,
-//       classified: classifiedCount,
-//       unclassified: transactions.length - classifiedCount,
-//       results
-//     };
-
-//   } catch (error) {
-//     await t.rollback();
-//     throw error;
-//   }
+//   return commonWords.length / Math.max(words1.length, words2.length);
 // }
 
+// CLIENT CRUD OPERATIONS ENDS
 
-async function findSimilarDescription(transaction, accountInfo) {
-  try {
-    // Fetch all accounts from the chart of accounts
-    const chartAccounts = await ChartOfAccounts.findAll({
-      include: [{
-        model: DetailType,
-        attributes: ['detail_type_name']
-      }]
-    });
-
-    // Check for BKOFAMERICA transactions
-    if (transaction.description.toLowerCase().includes('bkofamerica')) {
-      const lastFourDigits = accountInfo.accountNumber.slice(-4);
-      const bankAccountAccount = chartAccounts.find(acc => acc.account_code === '1000');
-      if (bankAccountAccount) {
-        return {
-          split: `Bank of America ${lastFourDigits}`,
-          account_code: bankAccountAccount.account_code,
-          detail_type_id: bankAccountAccount.detail_type_id,
-          subtype_id: bankAccountAccount.subtype_id
-        };
-      }
-    }
-
-    // Check for Online Banking Transfers
-    if (transaction.description.toLowerCase().includes('online banking transfer')) {
-      const onlineSalesAccount = chartAccounts.find(acc => acc.account_code === '4200');
-      if (onlineSalesAccount) {
-        return {
-          split: onlineSalesAccount.account_name,
-          account_code: onlineSalesAccount.account_code,
-          detail_type_id: onlineSalesAccount.detail_type_id,
-          subtype_id: onlineSalesAccount.subtype_id
-        };
-      }
-    }
-
-    // Check for Zelle payments
-    if (transaction.description.toLowerCase().includes('zelle')) {
-      const otherExpensesAccount = chartAccounts.find(acc => acc.account_code === '7400');
-      if (otherExpensesAccount) {
-        return {
-          split: otherExpensesAccount.account_name,
-          account_code: otherExpensesAccount.account_code,
-          detail_type_id: otherExpensesAccount.detail_type_id,
-          subtype_id: otherExpensesAccount.subtype_id
-        };
-      }
-    }
-
-    // Check for "WORKERS CU" transactions as Wages
-    if (transaction.description.toLowerCase().includes('workers cu')) {
-      const wagesAccount = chartAccounts.find(acc => acc.account_code === '6500');
-      if (wagesAccount) {
-        return {
-          split: wagesAccount.account_name,
-          account_code: wagesAccount.account_code,
-          detail_type_id: wagesAccount.detail_type_id,
-          subtype_id: wagesAccount.subtype_id
-        };
-      }
-    }
-
-    // Check for "Counter Credit" transactions as Accounts Receivable
-    if (transaction.description.toLowerCase().includes('counter credit')) {
-      const accountsReceivableAccount = chartAccounts.find(acc => acc.account_code === '1100');
-      if (accountsReceivableAccount) {
-        return {
-          split: accountsReceivableAccount.account_name,
-          account_code: accountsReceivableAccount.account_code,
-          detail_type_id: accountsReceivableAccount.detail_type_id,
-          subtype_id: accountsReceivableAccount.subtype_id
-        };
-      }
-    }
-
-    // Check for "Digital Federal DES:P2P PYMTS" transactions as Sales
-    if (transaction.description.toLowerCase().includes('digital federal  des:p2p pymts')) {
-      const salesAccount = chartAccounts.find(acc => acc.account_code === '4000');
-      if (salesAccount) {
-        return {
-          split: salesAccount.account_name,
-          account_code: salesAccount.account_code,
-          detail_type_id: salesAccount.detail_type_id,
-          subtype_id: salesAccount.subtype_id
-        };
-      }
-    }
-
-    // Check for software expenses
-    if (transaction.description.toLowerCase().includes('qbooks') ||
-        transaction.description.toLowerCase().includes('intuit')) {
-      const softwareAccount = chartAccounts.find(acc => acc.account_code === '7300');
-      if (softwareAccount) {
-        return {
-          split: softwareAccount.account_name,
-          account_code: softwareAccount.account_code,
-          detail_type_id: softwareAccount.detail_type_id,
-          subtype_id: softwareAccount.subtype_id
-        };
-      }
-    }
-
-    // If no match is found, return null
-    return null;
-  } catch (error) {
-    console.error('Classification error:', error);
-    return null;
-  }
+async function formatDate(date) {
+  return date instanceof Date
+    ? date.toISOString().split("T")[0] // Convert to YYYY-MM-DD format
+    : null;
 }
 
 async function classifyTransactions(transactions, accountInfo) {
   const t = await sequelize.transaction();
-  
+
   try {
     let classifiedCount = 0;
     const results = [];
 
     for (const transaction of transactions) {
-      const classification = await findSimilarDescription(transaction, accountInfo);
-      
+      const classification = await findSimilarDescription(
+        transaction,
+        accountInfo
+      );
+
       if (classification) {
-        await Transaction.update({
-          split: classification.split,
-          account_code: classification.account_code,
-          detail_type_id: classification.detail_type_id,
-          subtype_id: classification.subtype_id
-        }, {
-          where: { id: transaction.id },
-          transaction: t
-        });
+        await Transaction.update(
+          {
+            split: classification.split,
+          },
+          {
+            where: { id: transaction.id },
+            transaction: t,
+          }
+        );
 
         classifiedCount++;
         results.push({
           id: transaction.id,
           description: transaction.description,
           classification,
-          status: 'classified'
+          status: "classified",
         });
       } else {
         results.push({
           id: transaction.id,
           description: transaction.description,
-          status: 'unclassified'
+          status: "unclassified",
         });
       }
     }
@@ -834,16 +663,51 @@ async function classifyTransactions(transactions, accountInfo) {
       totalProcessed: transactions.length,
       classified: classifiedCount,
       unclassified: transactions.length - classifiedCount,
-      results
+      results,
     };
-
   } catch (error) {
     await t.rollback();
     throw error;
   }
 }
 
+async function updateStatementStatus(accountId, status) {
+  const t = await sequelize.transaction();
 
+  try {
+    // Find the account
+    const accountInfo = await AccountInfo.findOne({
+      where: { id: accountId },
+      transaction: t,
+    });
+
+    if (!accountInfo) {
+      throw new Error("Bank statement not found");
+    }
+
+    // Update the status
+    await accountInfo.update({ status }, { transaction: t });
+
+    await t.commit();
+
+    return {
+      success: true,
+      message: "Status updated successfully",
+      data: {
+        accountId: accountInfo.id,
+        status: status,
+        updatedAt: accountInfo.updatedAt,
+      },
+    };
+  } catch (error) {
+    if (t) await t.rollback();
+    throw {
+      success: false,
+      error: error.message || "Failed to update statement status",
+      details: error,
+    };
+  }
+}
 
 module.exports = {
   saveBankStatementData,
@@ -856,7 +720,8 @@ module.exports = {
   deleteClient,
   updateClient,
   getClientByAccessCode,
-  findSimilarDescription,
-  classifyTransactions,
-  formatDate
+  updateStatementStatus,
+  // findSimilarDescription,
+  // classifyTransactions,
+  formatDate,
 };

@@ -86,6 +86,10 @@ const AccountInfo = sequelize.define("AccountInfo", {
     type: DataTypes.STRING,
     allowNull: true,
   },
+  status: {
+    type: DataTypes.STRING,
+    allowNull: true,
+  },
 });
 
 // Transaction Model
@@ -118,180 +122,12 @@ const Transaction = sequelize.define("Transactions", {
     type: DataTypes.STRING,
     allowNull: true,
   },
-  // Add classification fields that match your structure
-  account_code: {
-    type: DataTypes.STRING,
-    allowNull: true,
-  },
-  detail_type_id: {
-    type: DataTypes.STRING,
-    allowNull: true,
-  },
-  subtype_id: {
-    type: DataTypes.STRING,
-    allowNull: true,
-  },
   split: {
     type: DataTypes.STRING,
     allowNull: true,
   },
 });
 
-const AccountType = sequelize.define(
-  "account_types",
-  {
-    type_id: {
-      type: DataTypes.STRING(10),
-      primaryKey: true,
-    },
-    type_name: {
-      type: DataTypes.STRING(100),
-      allowNull: true,
-    },
-    description: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    normal_balance: {
-      type: DataTypes.CHAR(1),
-      allowNull: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-  },
-  {
-    tableName: "account_types",
-    freezeTableName: true,
-    timestamps: true,
-  }
-);
-
-// Account Subtypes Model
-const AccountSubtype = sequelize.define(
-  "account_subtypes",
-  {
-    subtype_id: {
-      type: DataTypes.STRING(10),
-      primaryKey: true,
-    },
-    type_id: {
-      type: DataTypes.STRING(10),
-      allowNull: false,
-    },
-    subtype_name: {
-      type: DataTypes.STRING(50),
-      allowNull: false,
-    },
-    description: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-  },
-  {
-    tableName: "account_subtypes",
-    freezeTableName: true,
-    timestamps: true,
-  }
-);
-
-// Detail Types Model
-const DetailType = sequelize.define(
-  "detail_types",
-  {
-    detail_type_id: {
-      type: DataTypes.STRING(10),
-      primaryKey: true,
-    },
-    subtype_id: {
-      type: DataTypes.STRING(10),
-      allowNull: false,
-    },
-    detail_type_name: {
-      type: DataTypes.STRING(100),
-      allowNull: false,
-    },
-    description: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    createdAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-    updatedAt: {
-      type: DataTypes.DATE,
-      allowNull: true,
-    },
-  },
-  {
-    tableName: "detail_types",
-    freezeTableName: true,
-    timestamps: true,
-  }
-);
-
-// Chart of Accounts Model
-const ChartOfAccounts = sequelize.define(
-  "chart_of_accounts",
-  {
-    account_code: {
-      type: DataTypes.STRING(10),
-      primaryKey: true,
-    },
-    account_name: {
-      type: DataTypes.STRING(100),
-      allowNull: false,
-    },
-    type_id: {
-      type: DataTypes.STRING(10),
-      allowNull: false,
-    },
-    subtype_id: {
-      type: DataTypes.STRING(10),
-      allowNull: false,
-    },
-    detail_type_id: {
-      type: DataTypes.STRING(10),
-      allowNull: false,
-    },
-    description: {
-      type: DataTypes.TEXT,
-      allowNull: true,
-    },
-    is_active: {
-      type: DataTypes.BOOLEAN,
-      defaultValue: true,
-    },
-    parent_account_id: {
-      type: DataTypes.STRING(10),
-      allowNull: true,
-    },
-    balance_sheet_sequence: {
-      type: DataTypes.INTEGER,
-      allowNull: true,
-    },
-  },
-  {
-    tableName: "chart_of_accounts",
-    freezeTableName: true,
-    timestamps: false,
-    
-  }
-);
 
 // Check Model
 const Check = sequelize.define("Check", {
@@ -370,18 +206,7 @@ const Classification = sequelize.define(
       allowNull: true,
     },
   },
-  {
-    tableName: "classification_knowledge",
-    freezeTableName: true,
-    timestamps: false,
-  }
 );
-
-// Add association between Transaction and Classification
-Transaction.belongsTo(ChartOfAccounts, {
-  foreignKey: "account_code",
-  targetKey: "account_code",
-});
 
 // Define Associations
 Client.hasMany(AccountInfo, {
@@ -421,61 +246,11 @@ Summary.belongsTo(AccountInfo, {
   foreignKey: "accountId",
 });
 
-AccountType.hasMany(AccountSubtype, {
-  foreignKey: "type_id",
-  sourceKey: "type_id",
-});
-
-AccountSubtype.belongsTo(AccountType, {
-  foreignKey: "type_id",
-  targetKey: "type_id",
-});
-
-AccountSubtype.hasMany(DetailType, {
-  foreignKey: "subtype_id",
-  sourceKey: "subtype_id",
-});
-
-DetailType.belongsTo(AccountSubtype, {
-  foreignKey: "subtype_id",
-  targetKey: "subtype_id",
-});
-
-ChartOfAccounts.belongsTo(AccountType, {
-  foreignKey: "type_id",
-  targetKey: "type_id",
-});
-
-ChartOfAccounts.belongsTo(AccountSubtype, {
-  foreignKey: "subtype_id",
-  targetKey: "subtype_id",
-});
-
-ChartOfAccounts.belongsTo(DetailType, {
-  foreignKey: "detail_type_id",
-  targetKey: "detail_type_id",
-});
-
-// Fix the Transaction association to use ChartOfAccounts
-Transaction.belongsTo(ChartOfAccounts, {
-  foreignKey: "account_code",
-  targetKey: "account_code",
-});
-
-ChartOfAccounts.hasMany(Transaction, {
-  foreignKey: "account_code",
-  sourceKey: "account_code",
-});
-
 module.exports = {
   AccountInfo,
   Transaction,
   Check,
   Summary,
   Client,
-  Classification,
-  AccountType,
-  AccountSubtype,
-  DetailType,
-  ChartOfAccounts,
+  Classification
 };
